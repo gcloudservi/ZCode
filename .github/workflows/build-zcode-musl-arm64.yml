@@ -13,9 +13,9 @@ on:
         required: true
         default: "main"
       opentui_ref:
-        description: "opentui ref，必须与 ZCode 锁定的 @mbears/opentui-core 版本一致（ABI 对齐）"
+        description: "opentui 的 commit（必须等于 ZCode 锁定的 @mbears/opentui-core 的 gitHead，ABI 才对得上）"
         required: true
-        default: "v0.2.15"
+        default: "ac999798a89106fa5f60d7ed0d087bd8ea908964"
       desktop_agent:
         description: "true=压缩版(desktop-agent, minify 无 sourcemap)；false=明文+sourcemap"
         required: true
@@ -71,12 +71,18 @@ jobs:
           ln -sf "/usr/local/zig-aarch64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
           zig version
 
-      - name: 拉取源码（ZCode 用本 fork 自身；opentui 用上游）
+      - name: 拉取源码（ZCode 用本 fork 自身；opentui 按锁定 commit）
         run: |
           set -eu
           mkdir -p /src
-          git clone --depth 1 --branch "${{ inputs.zcode_ref }}"   "https://github.com/${{ github.repository }}" /src/zcode
-          git clone --depth 1 --branch "${{ inputs.opentui_ref }}" https://github.com/anomalyco/opentui /src/opentui
+          git clone --depth 1 --branch "${{ inputs.zcode_ref }}" "https://github.com/${{ github.repository }}" /src/zcode
+          # opentui 用锁定 commit（= @mbears/opentui-core 的 gitHead；用 git tag 会 ABI 不一致、缺 getRenderStats）
+          git init -q /src/opentui
+          cd /src/opentui
+          git remote add origin https://github.com/anomalyco/opentui
+          git fetch -q --depth 1 origin "${{ inputs.opentui_ref }}"
+          git checkout -q FETCH_HEAD
+          git log --oneline -1
 
       - name: 编译 opentui musl/arm64 原生库
         run: |
