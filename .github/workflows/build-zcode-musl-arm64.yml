@@ -88,16 +88,16 @@ jobs:
           echo "--- 产物 ---"
           find /src/opentui -name '*.so' -exec ls -l {} +
 
-      - name: 安装依赖并构建 TUI + CLI
+      - name: 安装依赖并构建（按依赖拓扑顺序）
         run: |
           set -eu
           cd /src/zcode
           pnpm install
-          pnpm --filter @zcode/tui build
+          # 按拓扑顺序构建 @zcode/cli 及其全部 workspace 依赖（contracts/i18n/shared/tui…），
+          # 否则 tsc 会报找不到 @zcode/contracts、@zcode/i18n 的类型声明。
+          pnpm --filter "@zcode/cli..." run build
           if [ "${{ inputs.desktop_agent }}" = "true" ]; then
-            pnpm --filter @zcode/cli build:desktop-agent
-          else
-            pnpm --filter @zcode/cli build
+            pnpm --filter @zcode/cli run build:desktop-agent
           fi
           ls -l apps/zcode-cli/packages/cli/dist
 
