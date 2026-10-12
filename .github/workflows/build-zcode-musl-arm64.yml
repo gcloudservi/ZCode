@@ -134,15 +134,28 @@ jobs:
           chmod +x /out/zcode-musl-arm64/bin/zcode
           tar czf /out/zcode-musl-arm64.tgz -C /out zcode-musl-arm64
 
-      - name: 上传构建产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: zcode-musl-arm64
-          path: /out/zcode-musl-arm64.tgz
-
-      - name: 创建 Release（可选）
-        if: ${{ inputs.release == 'true' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: zcode-musl-arm64-${{ inputs.zcode_ref }}
-          files: /out/zcode-musl-arm64.tgz
+      - name: 发布产物（纯 curl 走 Release API，规避 Alpine arm64 上的 JS action 限制）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          TAG="zcode-musl-arm64"
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          UPLOAD="https://uploads.github.com/repos/${GITHUB_REPOSITORY}"
+          rid="$(curl -s -H "Authorization: Bearer $GH_TOKEN" "$API/releases/tags/$TAG" \
+            | python3 -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)"
+          if [ -z "$rid" ]; then
+            rid="$(curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "$API/releases" -d "{\"tag_name\":\"$TAG\",\"name\":\"ZCode CLI (musl aarch64) — latest\",\"target_commitish\":\"$GITHUB_SHA\"}" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin).get('id',''))")"
+          fi
+          test -n "$rid" || { echo "创建/获取 release 失败"; exit 1; }
+          # 删掉同名旧 asset
+          for a in $(curl -s -H "Authorization: Bearer $GH_TOKEN" "$API/releases/$rid/assets" \
+            | python3 -c "import sys,json;[print(x['id']) for x in json.load(sys.stdin) if x['name']=='zcode-musl-arm64.tgz']"); do
+            curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$API/releases/assets/$a" >/dev/null
+          done
+          curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/gzip" \
+            --data-binary "/out/zcode-musl-arm64.tgz" \
+            "$UPLOAD/releases/$rid/assets?name=zcode-musl-arm64.tgz" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);print('asset:',d.get('name'),d.get('browser_download_url'))"
