@@ -45,7 +45,7 @@ jobs:
     steps:
       - name: 系统依赖
         run: |
-          apk add --no-cache bash git curl tar xz python3 make g++ linux-headers pkgconf ca-certificates
+          apk add --no-cache bash git curl tar xz python3 make g++ linux-headers pkgconf ca-certificates cmake ninja
 
       - name: 安装 Node ${NODE_VERSION}（musl/arm64）
         run: |
