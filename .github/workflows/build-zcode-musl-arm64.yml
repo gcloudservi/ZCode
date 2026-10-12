@@ -105,8 +105,9 @@ jobs:
         run: |
           set -eu
           cd /src/zcode
-          pnpm --filter @zcode/cli deploy --prod /out/app \
-            || pnpm --filter @zcode/cli deploy --prod --legacy /out/app
+          rm -rf /out/app
+          # pnpm v10 默认只对 inject-workspace-packages=true 的工作区 deploy，否则需 --legacy
+          pnpm --filter @zcode/cli deploy --prod --legacy /out/app
           echo "--- 部署结果 ---"
           ls -la /out/app
           ls -la /out/app/dist
