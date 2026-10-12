@@ -156,6 +156,6 @@ jobs:
             curl -s -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$API/releases/assets/$a" >/dev/null
           done
           curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/gzip" \
-            --data-binary "/out/zcode-musl-arm64.tgz" \
+            --data-binary "@/out/zcode-musl-arm64.tgz" \
             "$UPLOAD/releases/$rid/assets?name=zcode-musl-arm64.tgz" \
             | python3 -c "import sys,json;d=json.load(sys.stdin);print('asset:',d.get('name'),d.get('browser_download_url'))"
