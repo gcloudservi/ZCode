@@ -1,0 +1,145 @@
+name: Build ZCode CLI (musl aarch64)
+
+# 方案 A：全云端编译「官方 CLI 后端 + 官方 OpenTUI TUI」的 musl/aarch64 成品。
+# 关键点：官方 TUI 的原生库 libopentui.so 只有 glibc 预编译版（musl 下报
+# getcontext: symbol not found）。本 workflow 用 Zig 从源码现编 musl/arm64 版本替换它。
+# 必须在 arm64 runner 的 Alpine(musl) 容器里跑，产物才能直接用于 musl/aarch64。
+
+on:
+  workflow_dispatch:
+    inputs:
+      zcode_ref:
+        description: "ZCode ref（默认本 fork 的默认分支；可填 tag/sha）"
+        required: true
+        default: "main"
+      opentui_ref:
+        description: "opentui ref，必须与 ZCode 锁定的 @mbears/opentui-core 版本一致（ABI 对齐）"
+        required: true
+        default: "v0.2.15"
+      desktop_agent:
+        description: "true=压缩版(desktop-agent, minify 无 sourcemap)；false=明文+sourcemap"
+        required: true
+        default: "false"
+      release:
+        description: "true=创建 GitHub Release 并上传产物"
+        required: true
+        default: "false"
+
+concurrency:
+  group: zcode-musl-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "24.14.0"     # 官方 engines 要求
+  PNPM_VERSION: "10.33.2"     # 官方 packageManager
+  ZIG_VERSION: "0.16.0"       # opentui build.zig.zon 的 minimum_zig_version
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm   # 原生 arm64（公开仓库免费）
+    container:
+      image: alpine:3.21        # musl 环境
+    steps:
+      - name: 系统依赖
+        run: |
+          apk add --no-cache bash git curl tar xz python3 make g++ linux-headers pkgconf ca-certificates
+
+      - name: 安装 Node ${NODE_VERSION}（musl/arm64）
+        run: |
+          set -eu
+          url="https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-arm64-musl.tar.xz"
+          curl -fsSL -o /tmp/node.tar.xz "$url"
+          tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+          node -v
+          npm -v
+
+      - name: 安装 pnpm
+        run: |
+          npm i -g "pnpm@${PNPM_VERSION}"
+          pnpm -v
+
+      - name: 安装 Zig ${ZIG_VERSION}
+        run: |
+          set -eu
+          base="https://ziglang.org/download/${ZIG_VERSION}"
+          # Zig 0.16 官方包名：zig-aarch64-linux-<ver>.tar.xz
+          curl -fsSL -o /tmp/zig.tar.xz "${base}/zig-aarch64-linux-${ZIG_VERSION}.tar.xz"
+          tar -xJf /tmp/zig.tar.xz -C /usr/local
+          ln -sf "/usr/local/zig-aarch64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
+          zig version
+
+      - name: 拉取源码（ZCode 用本 fork 自身；opentui 用上游）
+        run: |
+          set -eu
+          mkdir -p /src
+          git clone --depth 1 --branch "${{ inputs.zcode_ref }}"   "https://github.com/${{ github.repository }}" /src/zcode
+          git clone --depth 1 --branch "${{ inputs.opentui_ref }}" https://github.com/anomalyco/opentui /src/opentui
+
+      - name: 编译 opentui musl/arm64 原生库
+        run: |
+          set -eu
+          cd /src/opentui/packages/native
+          # zig 依赖（uucode/ghostty/yoga）已 vendored，离线解压即可
+          sh scripts/prepare-zig-deps.sh
+          zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux-musl
+          echo "--- 产物 ---"
+          find zig-out -name '*.so' -exec ls -l {} +
+
+      - name: 安装依赖并构建 TUI + CLI
+        run: |
+          set -eu
+          cd /src/zcode
+          pnpm install
+          pnpm --filter @zcode/tui build
+          if [ "${{ inputs.desktop_agent }}" = "true" ]; then
+            pnpm --filter @zcode/cli build:desktop-agent
+          else
+            pnpm --filter @zcode/cli build
+          fi
+          ls -l apps/zcode-cli/packages/cli/dist
+
+      - name: 部署自包含运行时（收齐 @zcode/tui / koffi / playwright-core 等 external）
+        run: |
+          set -eu
+          cd /src/zcode
+          pnpm --filter @zcode/cli deploy --prod /out/app \
+            || pnpm --filter @zcode/cli deploy --prod --legacy /out/app
+          echo "--- 部署结果 ---"
+          ls -la /out/app
+          ls -la /out/app/dist
+
+      - name: 替换 musl 原生库并打包
+        run: |
+          set -eu
+          # 注意：必须在 deploy 之后再替换，否则 pnpm 会从 store 还原回 glibc 版 .so
+          so="$(find /src/opentui/packages/native/zig-out -name 'libopentui.so' | head -1)"
+          test -n "$so" || { echo "未找到新编的 libopentui.so"; exit 1; }
+          dst="$(find /out/app -path '*@mbears/opentui-core-linux-arm64/libopentui.so' | head -1)"
+          test -n "$dst" || { echo "未找到待替换的 libopentui.so（deploy 目录结构可能不同，请查 run 日志）"; exit 1; }
+          cp "$so" "$dst"
+          file "$dst"
+          mkdir -p /out/zcode-musl-arm64/bin
+          mv /out/app /out/zcode-musl-arm64/app
+          cat > /out/zcode-musl-arm64/bin/zcode <<'SH'
+          #!/bin/sh
+          DIR="$(cd "$(dirname "$0")/.." && pwd)"
+          exec node "$DIR/app/dist/zcode.cjs" "$@"
+          SH
+          chmod +x /out/zcode-musl-arm64/bin/zcode
+          tar czf /out/zcode-musl-arm64.tgz -C /out zcode-musl-arm64
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: zcode-musl-arm64
+          path: /out/zcode-musl-arm64.tgz
+
+      - name: 创建 Release（可选）
+        if: ${{ inputs.release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: zcode-musl-arm64-${{ inputs.zcode_ref }}
+          files: /out/zcode-musl-arm64.tgz
