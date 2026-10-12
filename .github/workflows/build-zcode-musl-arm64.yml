@@ -35,7 +35,7 @@ permissions:
 env:
   NODE_VERSION: "24.14.0"     # 官方 engines 要求
   PNPM_VERSION: "10.33.2"     # 官方 packageManager
-  ZIG_VERSION: "0.16.0"       # opentui build.zig.zon 的 minimum_zig_version
+  ZIG_VERSION: "0.15.2"       # opentui v0.2.15 的 build.zig 精确要求 0.15.2
 
 jobs:
   build:
@@ -81,12 +81,12 @@ jobs:
       - name: 编译 opentui musl/arm64 原生库
         run: |
           set -eu
-          cd /src/opentui/packages/native
-          # zig 依赖（uucode/ghostty/yoga）已 vendored，离线解压即可
-          sh scripts/prepare-zig-deps.sh
+          cd /src/opentui/packages/core/src/zig
+          # v0.2.15：build.zig 原生只列 gnu 目标，musl 靠 -Dtarget 三元组传入；
+          # 依赖 uucode 走远程 URL，CI 联网拉取。
           zig build -Doptimize=ReleaseFast -Dtarget=aarch64-linux-musl
           echo "--- 产物 ---"
-          find zig-out -name '*.so' -exec ls -l {} +
+          find /src/opentui -name '*.so' -exec ls -l {} +
 
       - name: 安装依赖并构建 TUI + CLI
         run: |
@@ -115,7 +115,7 @@ jobs:
         run: |
           set -eu
           # 注意：必须在 deploy 之后再替换，否则 pnpm 会从 store 还原回 glibc 版 .so
-          so="$(find /src/opentui/packages/native/zig-out -name 'libopentui.so' | head -1)"
+          so="$(find /src/opentui -name 'libopentui.so' | head -1)"
           test -n "$so" || { echo "未找到新编的 libopentui.so"; exit 1; }
           dst="$(find /out/app -path '*@mbears/opentui-core-linux-arm64/libopentui.so' | head -1)"
           test -n "$dst" || { echo "未找到待替换的 libopentui.so（deploy 目录结构可能不同，请查 run 日志）"; exit 1; }
