@@ -105,8 +105,10 @@ jobs:
         run: |
           set -eu
           cd /src/zcode
+          # legacy deploy 忽略 lockfile 重新解析，工作区里针对 desktop/测试的 patch 会变成“未使用”而报错；
+          # cli 运行时用不到这些 patch，先摘掉 patchedDependencies。
+          node -e "const fs=require('fs');const p='package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));if(j.pnpm)delete j.pnpm.patchedDependencies;fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')"
           rm -rf /out/app
-          # pnpm v10 默认只对 inject-workspace-packages=true 的工作区 deploy，否则需 --legacy
           pnpm --filter @zcode/cli deploy --prod --legacy /out/app
           echo "--- 部署结果 ---"
           ls -la /out/app
