@@ -123,7 +123,7 @@ jobs:
           dst="$(find /out/app -path '*@mbears/opentui-core-linux-arm64/libopentui.so' | head -1)"
           test -n "$dst" || { echo "未找到待替换的 libopentui.so（deploy 目录结构可能不同，请查 run 日志）"; exit 1; }
           cp "$so" "$dst"
-          file "$dst"
+          echo "so=$so"; echo "dst=$dst"; ls -l "$dst"
           mkdir -p /out/zcode-musl-arm64/bin
           mv /out/app /out/zcode-musl-arm64/app
           cat > /out/zcode-musl-arm64/bin/zcode <<'SH'
